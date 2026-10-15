@@ -16,7 +16,7 @@ import '../components/laser.dart';
 
 enum GameStatus { playing, won, lost, timeUp }
 
-class RobberyGame extends FlameGame with DragCallbacks {
+class RobberyGame extends FlameGame with DragCallbacks, HasCollisionDetection {
   final int stageIndex;
   final void Function(GameStatus status) onStatusChange;
   final void Function(int timeLeft) onTimeUpdate;
@@ -50,14 +50,30 @@ class RobberyGame extends FlameGame with DragCallbacks {
     _def = LevelsData.stages[stageIndex];
     _timeLeft = _def.time;
     _state.resetStageScore();
-    _buildWorld();
+
+    // 1. الأرضيات والحيطان
+    _buildTiles();
+
+    // 2. اللاعب الأول (مهم جداً قبل الكاميرا)
+    _buildPlayer();
+
+    // 3. الكاميرا تتبع اللاعب
+    camera.follow(player);
+    camera.viewfinder.anchor = Anchor.center;
+    camera.viewfinder.zoom = 1.0;
+
+    // 4. باقي العناصر
+    _buildCoins();
+    _buildGems();
+    _buildGuards();
+    _buildLasers();
+    _buildExit();
   }
 
-  void _buildWorld() {
+  void _buildTiles() {
     final map = _def.map;
     final palette = _def.palette;
 
-    // build walls & floor
     for (int y = 0; y < map.length; y++) {
       final row = map[y];
       for (int x = 0; x < row.length; x++) {
@@ -78,22 +94,34 @@ class RobberyGame extends FlameGame with DragCallbacks {
         }
       }
     }
+  }
 
-    // coins
+  void _buildPlayer() {
+    final s = _def.playerStart;
+    player = Player(
+      position: Vector2(s.x * LevelsData.tile, s.y * LevelsData.tile),
+      walls: walls,
+    );
+    add(player);
+  }
+
+  void _buildCoins() {
     for (final p in _def.coins) {
       final c = Coin(Vector2(p.x * LevelsData.tile, p.y * LevelsData.tile));
       coins.add(c);
       add(c);
     }
+  }
 
-    // gems
+  void _buildGems() {
     for (final p in _def.gems) {
       final g = Gem(Vector2(p.x * LevelsData.tile, p.y * LevelsData.tile));
       gems.add(g);
       add(g);
     }
+  }
 
-    // guards
+  void _buildGuards() {
     for (final def in _def.guards) {
       final g = Guard(
         position: Vector2(
@@ -108,8 +136,9 @@ class RobberyGame extends FlameGame with DragCallbacks {
       guards.add(g);
       add(g);
     }
+  }
 
-    // lasers
+  void _buildLasers() {
     for (final l in _def.lasers) {
       final laser = Laser(
         Vector2(l.from.x * LevelsData.tile, l.from.y * LevelsData.tile),
@@ -118,22 +147,11 @@ class RobberyGame extends FlameGame with DragCallbacks {
       lasers.add(laser);
       add(laser);
     }
+  }
 
-    // exit door
+  void _buildExit() {
     final e = _def.exitPos;
     add(ExitDoor(Vector2(e.x * LevelsData.tile, e.y * LevelsData.tile)));
-
-    // player
-    final s = _def.playerStart;
-    player = Player(
-      position: Vector2(s.x * LevelsData.tile, s.y * LevelsData.tile),
-      walls: walls,
-    );
-    add(player);
-
-    // camera follow
-    camera.follow(player);
-    camera.viewfinder.anchor = Anchor.center;
   }
 
   @override
@@ -157,7 +175,7 @@ class RobberyGame extends FlameGame with DragCallbacks {
     // coin pickup
     for (final c in coins) {
       if (!c.taken &&
-          c.position.distanceTo(player.position) < LevelsData.tile * 0.6) {
+          c.position.distanceTo(player.position) < LevelsData.tile * 0.7) {
         c.taken = true;
         c.removeFromParent();
         _state.addCoin();
@@ -167,7 +185,7 @@ class RobberyGame extends FlameGame with DragCallbacks {
     // gem pickup
     for (final g in gems) {
       if (!g.taken &&
-          g.position.distanceTo(player.position) < LevelsData.tile * 0.6) {
+          g.position.distanceTo(player.position) < LevelsData.tile * 0.7) {
         g.taken = true;
         g.removeFromParent();
         _state.addGem();
@@ -190,14 +208,14 @@ class RobberyGame extends FlameGame with DragCallbacks {
       }
     }
 
-    // exit reach (only when everything collected)
+    // exit reach
     final remaining = coins.where((c) => !c.taken).length +
         gems.where((g) => !g.taken).length;
 
     if (remaining == 0) {
       final e = _def.exitPos;
       final exitVec = Vector2(e.x * LevelsData.tile, e.y * LevelsData.tile);
-      if (exitVec.distanceTo(player.position) < LevelsData.tile * 0.7) {
+      if (exitVec.distanceTo(player.position) < LevelsData.tile * 0.8) {
         _finish(GameStatus.won);
       }
     }
@@ -214,16 +232,40 @@ class RobberyGame extends FlameGame with DragCallbacks {
     onStatusChange(status);
   }
 
+  // ============================
+  // SWIPE INPUT
+  // ============================
+  Vector2? _dragStart;
+
+  @override
+  void onDragStart(DragStartEvent event) {
+    super.onDragStart(event);
+    _dragStart = event.localPosition.clone();
+  }
+
+  @override
+  void onDragUpdate(DragUpdateEvent event) {
+    super.onDragUpdate(event);
+    if (_dragStart == null) return;
+
+    final current = event.localEndPosition;
+    final dx = current.x - _dragStart!.x;
+    final dy = current.y - _dragStart!.y;
+
+    // نتحرك بس لو السحبة عدت 30 بكسل
+    if (dx.abs() < 30 && dy.abs() < 30) return;
+
+    if (dx.abs() > dy.abs()) {
+      player.moveStep(dx > 0 ? 'right' : 'left');
+    } else {
+      player.moveStep(dy > 0 ? 'down' : 'up');
+    }
+    _dragStart = current.clone();
+  }
+
   @override
   void onDragEnd(DragEndEvent event) {
-    if (_status != GameStatus.playing) return;
-    final v = event.velocity;
-    if (v.length < 60) return;
-
-    if (v.x.abs() > v.y.abs()) {
-      player.moveStep(v.x > 0 ? 'right' : 'left');
-    } else {
-      player.moveStep(v.y > 0 ? 'down' : 'up');
-    }
+    super.onDragEnd(event);
+    _dragStart = null;
   }
 }
